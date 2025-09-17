@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Онлайн консультации и групповые встречи</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero__content">
+        <h1>Платформа для консультаций и групповой работы</h1>
+        <p>
+          Проводите индивидуальные онлайн встречи и создавайте безопасное пространство
+          для групповой работы в символическом круге.
+        </p>
+        <a class="hero__cta" href="#consultations">Начать консультацию</a>
+      </div>
+    </header>
+
+    <main>
+      <section id="consultations" class="panel">
+        <div class="panel__header">
+          <h2>Онлайн консультации</h2>
+          <p>
+            Создавайте ссылки на встречи, фиксируйте договорённости и переходите к видео прямо из интерфейса.
+          </p>
+        </div>
+
+        <div class="consultation-layout">
+          <section class="video-area" aria-label="Зона видеосвязи">
+            <div class="video-placeholder">
+              <span>Здесь может находиться ваш видеопоток или подключение к сервису видеоконференций.</span>
+            </div>
+            <div class="quick-actions">
+              <button type="button" class="button button--primary">Начать встречу</button>
+              <button type="button" class="button">Отправить приглашение</button>
+            </div>
+          </section>
+
+          <aside class="consultation-controls" aria-label="Управление консультациями">
+            <form id="consultation-form" class="form-card">
+              <h3>Запланировать консультацию</h3>
+              <label class="form-field">
+                <span>Имя клиента</span>
+                <input type="text" name="client" required placeholder="Например, Анна Иванова" />
+              </label>
+
+              <label class="form-field">
+                <span>Дата и время</span>
+                <input type="datetime-local" name="datetime" required />
+              </label>
+
+              <label class="form-field">
+                <span>Длительность (мин)</span>
+                <input type="number" name="duration" min="15" step="15" value="60" />
+              </label>
+
+              <label class="form-field">
+                <span>Ссылка на встречу</span>
+                <input type="url" name="link" placeholder="https://..." />
+              </label>
+
+              <label class="form-field">
+                <span>Заметки</span>
+                <textarea name="notes" rows="3" placeholder="Краткое описание запроса"></textarea>
+              </label>
+
+              <button type="submit" class="button button--primary button--full">Добавить в расписание</button>
+            </form>
+
+            <div class="form-card">
+              <h3>Ближайшие консультации</h3>
+              <ul id="consultation-list" class="consultation-list" aria-live="polite">
+                <li class="consultation-list__empty">Пока нет запланированных консультаций</li>
+              </ul>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="group" class="panel panel--accent">
+        <div class="panel__header">
+          <h2>Групповая работа в круге</h2>
+          <p>
+            Управляйте количеством мест, приглашайте участников и наблюдайте, как каждый занимает своё место в круге.
+          </p>
+        </div>
+
+        <div class="group-controls">
+          <div class="group-controls__block">
+            <label class="form-field form-field--inline">
+              <span>Количество мест</span>
+              <input id="seat-count" type="number" min="1" value="8" />
+            </label>
+            <button id="apply-seat-count" type="button" class="button">Обновить круг</button>
+          </div>
+          <button id="add-seat" type="button" class="button button--ghost">Добавить место</button>
+        </div>
+
+        <div class="participant-panel">
+          <div class="participant-panel__inputs">
+            <label class="form-field">
+              <span>Имя участника</span>
+              <input id="participant-name" type="text" placeholder="Введите имя" />
+            </label>
+            <button id="start-seat-selection" type="button" class="button button--primary">Выбрать место</button>
+          </div>
+          <p id="selection-message" class="selection-message" role="status" aria-live="polite"></p>
+        </div>
+
+        <div class="circle-wrapper">
+          <div class="circle" id="circle" aria-label="Схема круга участников"></div>
+        </div>
+
+        <aside class="group-info">
+          <h3>Участники группы</h3>
+          <ul id="participant-list" class="participant-list" aria-live="polite"></ul>
+        </aside>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>© 2024 Онлайн-платформа для консультаций. Все права защищены.</p>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
