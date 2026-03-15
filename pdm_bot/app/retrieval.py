@@ -10,6 +10,51 @@ from .llm import embedding_for_text
 
 qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 _collection_ensured = False
+ALLOWED_DOMAIN_SCOPES = {"all", "pdm", "group_analysis", "diagnosis"}
+
+
+def normalize_scope(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+
+
+def matches_domain_scope(domain_scope: str, payload: Dict) -> bool:
+    """Alias-aware scope matching without brittle raw substring filtering.
+
+    TODO: migrate to strict metadata filters in Qdrant query stage
+    when domain taxonomy is finalized.
+    """
+    if domain_scope not in ALLOWED_DOMAIN_SCOPES or domain_scope == "all":
+        return True
+
+    raw_values = [
+        str(payload.get("corpus", "")),
+        str(payload.get("section", "")),
+        str(payload.get("doc_type", "")),
+        str(payload.get("source_name", "")),
+    ]
+    normalized_values = [normalize_scope(v) for v in raw_values if v]
+
+    candidates = set(normalized_values)
+    token_candidates = set()
+    for value in normalized_values:
+        token_candidates.update(t for t in value.split("_") if t)
+
+    aliases = {
+        "pdm": {"pdm", "psychodynamic", "psychodynamic_management"},
+        "group_analysis": {"group_analysis", "groupanalysis", "group", "group_analytic"},
+        "diagnosis": {"diagnosis", "diagnostic", "diag"},
+    }
+    scope_aliases = aliases[domain_scope]
+    return bool(scope_aliases.intersection(candidates) or scope_aliases.intersection(token_candidates))
+
+
+
+
+
+def hybrid_score(vector_score: float, keyword_score_value: float, vector_weight: float = 0.75) -> float:
+    if vector_weight < 0 or vector_weight > 1:
+        raise ValueError("vector_weight должен быть в диапазоне [0, 1]")
+    return vector_weight * vector_score + (1 - vector_weight) * keyword_score_value
 
 
 def point_id_for_chunk(file_path: str, chunk_index: int) -> int:
@@ -57,15 +102,12 @@ def retrieve_context(query: str, top_k: int = TOP_K, domain_scope: str = "all") 
         if not text:
             continue
 
-        corpus = str(payload.get("corpus", "")).lower()
-        if domain_scope not in {"all", "pdm", "group_analysis", "diagnosis"}:
-            domain_scope = "all"
-        if domain_scope != "all" and domain_scope not in corpus:
+        if not matches_domain_scope(domain_scope, payload):
             continue
 
         v_score = float(getattr(hit, "score", 0.0))
         k_score = keyword_score(query, text)
-        hybrid = 0.75 * v_score + 0.25 * k_score
+        hybrid = hybrid_score(v_score, k_score)
 
         rows.append(
             {
