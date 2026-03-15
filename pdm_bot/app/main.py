@@ -2,6 +2,7 @@ from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandle
 
 from .config import TELEGRAM_TOKEN, validate_runtime_config
 from .db import init_db
+from .health import runtime_health_report
 from .indexing import start_worker, sync_library
 from .logging_setup import setup_logging
 from .retrieval import ensure_qdrant_collection
@@ -39,6 +40,20 @@ def main() -> None:
     except Exception:
         logger.exception("Ошибка стартовой синхронизации")
 
+    try:
+        report = runtime_health_report()
+        logger.info(
+            "Диагностика старта: overall=%s .env=%s TELEGRAM_TOKEN=%s OPENAI_API_KEY=%s DOCS_DIR=%s Qdrant=%s",
+            report.get("overall"),
+            report.get("env_file"),
+            report.get("telegram_token"),
+            report.get("openai_api_key"),
+            report.get("docs_dir"),
+            report.get("qdrant"),
+        )
+    except Exception:
+        logger.exception("Ошибка диагностики старта")
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_error_handler(error_handler)
@@ -62,7 +77,7 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    logger.info("PDM bot started")
+    logger.info("pdm_bot запущен")
     app.run_polling(drop_pending_updates=True)
 
 
