@@ -2,36 +2,25 @@ import asyncio
 import time
 from typing import List
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from .config import DOCS_DIR, MEMORY_MESSAGES_LIMIT, OWNER_CHAT_ID, TOP_K
-from .db import (
-    get_library_stats,
-    get_recent_messages,
-    get_sync_value,
-    get_user_row,
-    list_jobs,
-    save_message,
-    set_user_setting,
+from .db import get_sync_value, get_user_row, set_user_setting
+from .health import runtime_health_report
+from .services.conversation_service import build_assistant_reply
+from .services.indexing_service import get_recent_jobs, get_stats_row, queue_full_reindex, run_sync
+from .services.user_settings_service import (
+    DEPTH_TITLES,
+    MODE_TITLES,
+    TONE_TITLES,
+    depth_keyboard,
+    mode_keyboard,
+    render_profile,
+    tone_keyboard,
 )
-from .indexing import enqueue_full_reindex, sync_library
-from .llm import ask_llm
-from .prompts import build_system_prompt
-from .retrieval import build_context_block, retrieve_context
 from .utils import split_message
-
-MODE_TITLES = {"analytic": "Аналитический", "diagnostic": "Диагностический", "supportive": "Поддерживающий", "general": "Общий"}
-TONE_TITLES = {"attuned": "Чуткий", "neutral": "Нейтральный", "structured": "Структурный", "warm": "Тёплый"}
-DEPTH_TITLES = {"brief": "Кратко", "medium": "Средне", "deep": "Глубоко"}
-DOMAIN_SCOPE_TITLES = {
-    "all": "Вся библиотека",
-    "pdm": "Только PDM",
-    "group_analysis": "Только группанализ",
-    "diagnosis": "Только диагностика",
-}
-
 
 def _is_owner(chat_id: str) -> bool:
     return bool(OWNER_CHAT_ID) and chat_id == OWNER_CHAT_ID
@@ -43,39 +32,6 @@ def _owner_guard(chat_id: str) -> str:
     return "Эта команда доступна только владельцу бота."
 
 
-def _render_profile(user_row) -> str:
-    return (
-        "Текущие настройки:\n"
-        f"• режим: {MODE_TITLES.get(user_row['mode'], user_row['mode'])}\n"
-        f"• тон: {TONE_TITLES.get(user_row['tone'], user_row['tone'])}\n"
-        f"• глубина: {DEPTH_TITLES.get(user_row['depth'], user_row['depth'])}\n"
-        f"• стиль: {user_row['response_style']}\n"
-        f"• цитирования: {user_row['citation_mode']}\n"
-        f"• область поиска: {DOMAIN_SCOPE_TITLES.get(user_row['domain_scope'], user_row['domain_scope'])}\n"
-        f"• язык: {user_row['language_pref']}\n"
-        f"• детализация: {user_row['verbosity']}\n"
-        f"• источники/отладка: {user_row['sources_enabled']}/{user_row['debug_enabled']}\n"
-    )
-
-
-def _mode_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Аналитический", callback_data="mode:analytic"), InlineKeyboardButton("Диагностический", callback_data="mode:diagnostic")],
-        [InlineKeyboardButton("Поддерживающий", callback_data="mode:supportive"), InlineKeyboardButton("Общий", callback_data="mode:general")],
-    ])
-
-
-def _tone_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Чуткий", callback_data="tone:attuned"), InlineKeyboardButton("Нейтральный", callback_data="tone:neutral")],
-        [InlineKeyboardButton("Структурный", callback_data="tone:structured"), InlineKeyboardButton("Тёплый", callback_data="tone:warm")],
-    ])
-
-
-def _depth_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("Кратко", callback_data="depth:brief"), InlineKeyboardButton("Средне", callback_data="depth:medium"), InlineKeyboardButton("Глубоко", callback_data="depth:deep")]])
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.effective_chat:
         return
@@ -85,42 +41,56 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Команды:\n"
         "/help /diagnose /tone /depth /mode /stats /reindex /index_status /health /collections /config\n"
         "(админ-команды доступны только владельцу)\n"
-        f"{_render_profile(row)}",
-        reply_markup=_mode_keyboard(),
+        f"{render_profile(row)}",
+        reply_markup=mode_keyboard(),
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
-        await update.message.reply_text("/start /help /diagnose /tone /depth /mode /stats /reindex /index_status\nдля владельца: /health /collections /config /jobs /debug /sources")
+        await update.message.reply_text(
+            """Доступные команды:
+• /start — запуск и текущие настройки
+• /help — помощь
+• /diagnose — выбор режима
+• /tone — выбор тона
+• /depth — выбор глубины
+• /mode — показать профиль
+• /stats — статистика библиотеки
+• /reindex — поставить индексацию в очередь
+• /index_status — статус задач индексации
+
+Команды владельца:
+• /health • /collections • /config • /jobs • /debug • /sources"""
+        )
 
 
 async def diagnose(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
-        await update.message.reply_text("Выбери режим:", reply_markup=_mode_keyboard())
+        await update.message.reply_text("Выбери режим:", reply_markup=mode_keyboard())
 
 
 async def tone_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
-        await update.message.reply_text("Выбери тон:", reply_markup=_tone_keyboard())
+        await update.message.reply_text("Выбери тон:", reply_markup=tone_keyboard())
 
 
 async def depth_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
-        await update.message.reply_text("Выбери глубину:", reply_markup=_depth_keyboard())
+        await update.message.reply_text("Выбери глубину:", reply_markup=depth_keyboard())
 
 
 async def mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.effective_chat:
         return
     row = await asyncio.to_thread(get_user_row, str(update.effective_chat.id))
-    await update.message.reply_text(_render_profile(row))
+    await update.message.reply_text(render_profile(row))
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
-    row = await asyncio.to_thread(get_library_stats)
+    row = await asyncio.to_thread(get_stats_row)
     last_sync = await asyncio.to_thread(get_sync_value, "last_sync_ts", "0")
     try:
         last_sync_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(last_sync)))
@@ -139,14 +109,14 @@ async def reindex_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if guard:
         await update.message.reply_text(guard)
         return
-    job_id = await asyncio.to_thread(enqueue_full_reindex, {"chat_id": chat_id})
+    job_id = await asyncio.to_thread(queue_full_reindex, {"chat_id": chat_id})
     await update.message.reply_text(f"Индексация поставлена в очередь. job_id={job_id}")
 
 
 async def index_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
-    jobs = await asyncio.to_thread(list_jobs, 10)
+    jobs = await asyncio.to_thread(get_recent_jobs, 10)
     if not jobs:
         await update.message.reply_text("Задач индексации пока нет.")
         return
@@ -161,8 +131,20 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if guard:
         await update.message.reply_text(guard)
         return
-    res = await asyncio.to_thread(sync_library, False)
-    await update.message.reply_text(f"Состояние: OK\nАвтосинхронизация: {res}")
+
+    sync_res = await asyncio.to_thread(run_sync, False)
+    report = await asyncio.to_thread(runtime_health_report)
+
+    text = (
+        f"Состояние: {report['overall']}\n"
+        f"• .env: {report['env_file']}\n"
+        f"• TELEGRAM_TOKEN: {report['telegram_token']}\n"
+        f"• OPENAI_API_KEY: {report['openai_api_key']}\n"
+        f"• DOCS_DIR: {report['docs_dir']}\n"
+        f"• Qdrant: {report['qdrant']}\n"
+        f"• Автосинхронизация: {sync_res}"
+    )
+    await update.message.reply_text(text)
 
 
 async def collections_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -187,7 +169,7 @@ async def config_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not update.message or not update.effective_chat:
         return
     row = await asyncio.to_thread(get_user_row, str(update.effective_chat.id))
-    await update.message.reply_text(_render_profile(row))
+    await update.message.reply_text(render_profile(row))
 
 
 async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -236,7 +218,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if kind in allowed and value in allowed[kind]:
         await asyncio.to_thread(set_user_setting, chat_id, kind, value)
         row = await asyncio.to_thread(get_user_row, chat_id)
-        await query.edit_message_text(_render_profile(row))
+        await query.edit_message_text(render_profile(row))
         return
 
     await query.edit_message_text("Неизвестная настройка")
@@ -251,25 +233,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not user_text:
         return
 
-    await asyncio.to_thread(save_message, chat_id, "user", user_text)
-    row = await asyncio.to_thread(get_user_row, chat_id)
-
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
-    history_rows = await asyncio.to_thread(get_recent_messages, chat_id, MEMORY_MESSAGES_LIMIT)
-    history = [{"role": r["role"], "content": r["content"]} for r in history_rows if r["role"] in {"user", "assistant"}]
-
-    retrieved = await asyncio.to_thread(retrieve_context, user_text, TOP_K, row["domain_scope"])
-    context_block, used_sources = build_context_block(retrieved)
-    system_prompt = build_system_prompt(row, user_text)
-
-    answer = await asyncio.to_thread(ask_llm, system_prompt, context_block, history, user_text)
-    await asyncio.to_thread(save_message, chat_id, "assistant", answer)
-
-    show_sources = int(row["sources_enabled"]) == 1
-    if show_sources and used_sources:
-        sources_text = "\n".join(f"— {name}" for name in used_sources[:8])
-        answer = f"{answer}\n\nИсточники:\n{sources_text}"
+    answer = await asyncio.to_thread(build_assistant_reply, chat_id, user_text, TOP_K, MEMORY_MESSAGES_LIMIT)
 
     for part in split_message(answer):
         await update.message.reply_text(part)
