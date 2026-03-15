@@ -5,8 +5,9 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parents[2]
 DOCS_DIR = BASE_DIR / "docs"
 DB_PATH = BASE_DIR / "bot.db"
+ENV_PATH = BASE_DIR / ".env"
 
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(ENV_PATH)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
